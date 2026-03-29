@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -137,6 +138,7 @@ fun GameScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
         Row(
@@ -184,7 +186,7 @@ fun GameScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-            Text(
+        Text(
             text = "Grid: ${activePuzzle.rows} x ${activePuzzle.cols}",
             style = MaterialTheme.typography.bodyMedium
         )

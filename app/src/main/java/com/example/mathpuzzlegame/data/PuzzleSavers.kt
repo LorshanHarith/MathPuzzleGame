@@ -38,10 +38,14 @@ val sessionConfigSaver: Saver<SessionConfig, Any> = listSaver<SessionConfig, Str
         )
     },
     restore = { saved ->
-        SessionConfig(
-            mode = GameMode.valueOf(saved[0]),
-            sessionSeed = saved[1].toInt(),
-            requestedEquationCount = saved[2].toInt()
-        )
+        if (saved.size < 3) {
+            null
+        } else {
+            SessionConfig(
+                mode = GameMode.valueOf(saved[0]),
+                sessionSeed = saved[1].toInt(),
+                requestedEquationCount = saved[2].toInt()
+            )
+        }
     }
 )
