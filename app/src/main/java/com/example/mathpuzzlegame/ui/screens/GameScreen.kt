@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,6 +41,8 @@ import com.example.mathpuzzlegame.logic.getCellText
 import com.example.mathpuzzlegame.ui.components.NumberInputDialog
 import com.example.mathpuzzlegame.ui.components.PuzzleCell
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun GameScreen(
@@ -49,16 +52,55 @@ fun GameScreen(
     val sessionKey = remember(sessionConfig) {
         "${sessionConfig.mode.name}_${sessionConfig.sessionSeed}_${sessionConfig.requestedEquationCount}"
     }
-    val puzzle = remember(sessionKey) {
-        PuzzleFactory.createPuzzle(
-            mode = sessionConfig.mode,
-            requestedEquationCount = sessionConfig.requestedEquationCount,
-            seed = sessionConfig.sessionSeed
-        )
+    val puzzle by produceState<com.example.mathpuzzlegame.data.PuzzleDefinition?>(
+        initialValue = null,
+        key1 = sessionKey
+    ) {
+        /*
+         * Puzzle generation can be noticeably heavier in advanced mode because the generator
+         * checks whether additional blank cells still leave a unique solution. Running that
+         * work on a background dispatcher prevents the Android splash screen from appearing to
+         * freeze while Compose waits for the first frame.
+         */
+        value = withContext(Dispatchers.Default) {
+            PuzzleFactory.createPuzzle(
+                mode = sessionConfig.mode,
+                requestedEquationCount = sessionConfig.requestedEquationCount,
+                seed = sessionConfig.sessionSeed
+            )
+        }
     }
 
+    if (puzzle == null) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = if (sessionConfig.mode == GameMode.NORMAL) {
+                    "Preparing new game..."
+                } else {
+                    "Preparing advanced puzzle..."
+                },
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "Please wait a moment.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        return
+    }
+
+    val activePuzzle = puzzle!!
+
     var cells by rememberSaveable(sessionKey, stateSaver = cellListSaver) {
-        mutableStateOf(puzzle.cells)
+        mutableStateOf(activePuzzle.cells)
     }
     var selectedCellIndex by rememberSaveable(sessionKey) { mutableIntStateOf(-1) }
     var showInputDialog by rememberSaveable(sessionKey) { mutableStateOf(false) }
@@ -66,8 +108,8 @@ fun GameScreen(
     var timeLeft by rememberSaveable(sessionKey) { mutableIntStateOf(60) }
     var gameOver by rememberSaveable(sessionKey) { mutableStateOf(false) }
 
-    val equationStates = remember(cells, puzzle.equations) {
-        puzzle.equations.map { equation -> evaluateEquation(equation, cells) }
+    val equationStates = remember(cells, activePuzzle.equations) {
+        activePuzzle.equations.map { equation -> evaluateEquation(equation, cells) }
     }
     val score = equationStates.count { it == EquationState.CORRECT }
     val allInputCellsFilled = cells
@@ -142,8 +184,8 @@ fun GameScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        Text(
-            text = "Grid: ${puzzle.rows} x ${puzzle.cols}",
+            Text(
+            text = "Grid: ${activePuzzle.rows} x ${activePuzzle.cols}",
             style = MaterialTheme.typography.bodyMedium
         )
 
@@ -151,11 +193,11 @@ fun GameScreen(
 
         Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
             Column {
-                for (row in 0 until puzzle.rows) {
+                for (row in 0 until activePuzzle.rows) {
                     Row {
-                        for (col in 0 until puzzle.cols) {
+                        for (col in 0 until activePuzzle.cols) {
                             val cell = cells.first { it.row == row && it.col == col }
-                            val relatedStates = puzzle.equations
+                            val relatedStates = activePuzzle.equations
                                 .filter { equation ->
                                     equation.cells.any { position ->
                                         position.row == row && position.col == col
