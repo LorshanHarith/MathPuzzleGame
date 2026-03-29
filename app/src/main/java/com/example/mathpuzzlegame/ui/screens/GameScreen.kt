@@ -1,6 +1,7 @@
 package com.example.mathpuzzlegame.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,19 +11,24 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -31,9 +37,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.mathpuzzlegame.data.CellData
 import com.example.mathpuzzlegame.data.CellType
 import com.example.mathpuzzlegame.data.EquationState
 import com.example.mathpuzzlegame.data.GameMode
+import com.example.mathpuzzlegame.data.GridPosition
+import com.example.mathpuzzlegame.data.PuzzleDefinition
 import com.example.mathpuzzlegame.data.PuzzleFactory
 import com.example.mathpuzzlegame.data.SessionConfig
 import com.example.mathpuzzlegame.data.cellListSaver
@@ -41,8 +50,8 @@ import com.example.mathpuzzlegame.logic.evaluateEquation
 import com.example.mathpuzzlegame.logic.getCellText
 import com.example.mathpuzzlegame.ui.components.NumberInputDialog
 import com.example.mathpuzzlegame.ui.components.PuzzleCell
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -53,16 +62,8 @@ fun GameScreen(
     val sessionKey = remember(sessionConfig) {
         "${sessionConfig.mode.name}_${sessionConfig.sessionSeed}_${sessionConfig.requestedEquationCount}"
     }
-    val puzzle by produceState<com.example.mathpuzzlegame.data.PuzzleDefinition?>(
-        initialValue = null,
-        key1 = sessionKey
-    ) {
-        /*
-         * Puzzle generation can be noticeably heavier in advanced mode because the generator
-         * checks whether additional blank cells still leave a unique solution. Running that
-         * work on a background dispatcher prevents the Android splash screen from appearing to
-         * freeze while Compose waits for the first frame.
-         */
+
+    val puzzle by produceState<PuzzleDefinition?>(initialValue = null, key1 = sessionKey) {
         value = withContext(Dispatchers.Default) {
             PuzzleFactory.createPuzzle(
                 mode = sessionConfig.mode,
@@ -105,40 +106,93 @@ fun GameScreen(
     }
     var selectedCellIndex by rememberSaveable(sessionKey) { mutableIntStateOf(-1) }
     var showInputDialog by rememberSaveable(sessionKey) { mutableStateOf(false) }
+    var showQuitDialog by rememberSaveable(sessionKey) { mutableStateOf(false) }
+
     var timerEnabled by rememberSaveable(sessionKey) { mutableStateOf(false) }
+    var timerEndEpochMillis by rememberSaveable(sessionKey) { mutableLongStateOf(0L) }
     var timeLeft by rememberSaveable(sessionKey) { mutableIntStateOf(60) }
     var gameOver by rememberSaveable(sessionKey) { mutableStateOf(false) }
+
+    val cellsByPosition = remember(cells) {
+        cells.associateBy { it.row to it.col }
+    }
 
     val equationStates = remember(cells, activePuzzle.equations) {
         activePuzzle.equations.map { equation -> evaluateEquation(equation, cells) }
     }
     val score = equationStates.count { it == EquationState.CORRECT }
+
+    val equationIndicesByPosition = remember(activePuzzle.equations) {
+        val map = mutableMapOf<Pair<Int, Int>, MutableList<Int>>()
+        activePuzzle.equations.forEachIndexed { index, equation ->
+            equation.cells.forEach { position ->
+                val key = position.row to position.col
+                map.getOrPut(key) { mutableListOf() }.add(index)
+            }
+        }
+        map
+    }
+
     val allInputCellsFilled = cells
         .filter { it.type == CellType.INPUT }
         .all { it.inputValue.isNotBlank() }
     val puzzleSolved = allInputCellsFilled && equationStates.all { it == EquationState.CORRECT }
+    val gameLocked = gameOver || puzzleSolved
+
+    val cellSize = remember(activePuzzle.rows, activePuzzle.cols) {
+        val densityAnchor = maxOf(activePuzzle.rows, activePuzzle.cols)
+        when {
+            densityAnchor >= 20 -> 22.dp
+            densityAnchor >= 18 -> 24.dp
+            densityAnchor >= 16 -> 26.dp
+            densityAnchor >= 14 -> 30.dp
+            densityAnchor >= 12 -> 34.dp
+            else -> 40.dp
+        }
+    }
+
     val inputDialogInitialValue = if (selectedCellIndex in cells.indices) {
         cells[selectedCellIndex].inputValue
     } else {
         ""
     }
 
-    BackHandler(onBack = onBackToMenu)
-
-    LaunchedEffect(timerEnabled, timeLeft, gameOver, puzzleSolved) {
-        if (timerEnabled && timeLeft > 0 && !gameOver && !puzzleSolved) {
-            delay(1_000)
-            timeLeft -= 1
-            if (timeLeft == 0) {
-                gameOver = true
+    val requestExit = remember(gameLocked) {
+        {
+            if (gameLocked) {
+                onBackToMenu()
+            } else {
+                showQuitDialog = true
             }
+        }
+    }
+
+    BackHandler(onBack = { requestExit() })
+
+    LaunchedEffect(timerEnabled, timerEndEpochMillis, puzzleSolved, gameOver) {
+        if (!timerEnabled || puzzleSolved || gameOver) {
+            return@LaunchedEffect
+        }
+
+        while (timerEnabled && !puzzleSolved && !gameOver) {
+            val remainingMillis = timerEndEpochMillis - System.currentTimeMillis()
+            val remainingSeconds = ((remainingMillis + 999L) / 1000L).toInt()
+
+            if (remainingSeconds <= 0) {
+                timeLeft = 0
+                timerEnabled = false
+                gameOver = true
+                break
+            }
+
+            timeLeft = remainingSeconds
+            delay(200L)
         }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
         Row(
@@ -161,11 +215,18 @@ fun GameScreen(
                     Switch(
                         checked = timerEnabled,
                         onCheckedChange = { checked ->
-                            if (!gameOver && !puzzleSolved) {
-                                timerEnabled = checked
-                                if (!checked) {
-                                    timeLeft = 60
-                                }
+                            if (gameLocked) {
+                                return@Switch
+                            }
+                            if (checked) {
+                                timerEnabled = true
+                                gameOver = false
+                                timeLeft = 60
+                                timerEndEpochMillis = System.currentTimeMillis() + 60_000L
+                            } else {
+                                timerEnabled = false
+                                timeLeft = 60
+                                timerEndEpochMillis = 0L
                             }
                         }
                     )
@@ -177,35 +238,53 @@ fun GameScreen(
                 }
             }
 
-            Text(
-                text = "Score: $score",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "Score: $score",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = { requestExit() }) {
+                    Text(if (gameLocked) "Home" else "Quit")
+                }
+            }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         Text(
             text = "Grid: ${activePuzzle.rows} x ${activePuzzle.cols}",
             style = MaterialTheme.typography.bodyMedium
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        Box(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            Column {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 200.dp, max = 380.dp)
+                .border(1.dp, Color(0xFF3C4247))
+                .padding(4.dp)
+        ) {
+            val verticalGridScroll = rememberScrollState()
+            val horizontalGridScroll = rememberScrollState()
+
+            Column(
+                modifier = Modifier
+                    .verticalScroll(verticalGridScroll)
+                    .horizontalScroll(horizontalGridScroll)
+            ) {
                 for (row in 0 until activePuzzle.rows) {
                     Row {
                         for (col in 0 until activePuzzle.cols) {
-                            val cell = cells.first { it.row == row && it.col == col }
-                            val relatedStates = activePuzzle.equations
-                                .filter { equation ->
-                                    equation.cells.any { position ->
-                                        position.row == row && position.col == col
-                                    }
-                                }
-                                .map { equation -> evaluateEquation(equation, cells) }
+                            val cell = cellsByPosition[row to col] ?: CellData(
+                                row = row,
+                                col = col,
+                                type = CellType.BLOCK
+                            )
+                            val relatedIndices = equationIndicesByPosition[row to col].orEmpty()
+                            val relatedStates = relatedIndices.map { index -> equationStates[index] }
 
                             val backgroundColor = when {
                                 cell.type == CellType.BLOCK -> Color(0xFF1F2933)
@@ -221,15 +300,18 @@ fun GameScreen(
                                 Color(0xFF1A1A1A)
                             }
 
-                            val canClick = cell.type == CellType.INPUT && !gameOver && !puzzleSolved
+                            val canClick = cell.type == CellType.INPUT && !gameLocked
 
                             PuzzleCell(
                                 value = getCellText(cell),
                                 backgroundColor = backgroundColor,
                                 textColor = textColor,
                                 clickable = canClick,
+                                cellSize = cellSize,
                                 onClick = {
-                                    selectedCellIndex = cells.indexOf(cell)
+                                    selectedCellIndex = cells.indexOfFirst {
+                                        it.row == cell.row && it.col == cell.col
+                                    }
                                     showInputDialog = true
                                 }
                             )
@@ -243,7 +325,7 @@ fun GameScreen(
 
         if (puzzleSolved) {
             Text(
-                text = "Puzzle completed. Press the Android Back button to return to the menu and start a new game.",
+                text = "Puzzle completed. You can go Home now.",
                 color = Color(0xFF116329),
                 style = MaterialTheme.typography.bodyLarge
             )
@@ -269,6 +351,31 @@ fun GameScreen(
                 updated[selectedCellIndex] = oldCell.copy(inputValue = enteredValue)
                 cells = updated
                 showInputDialog = false
+            }
+        )
+    }
+
+    if (showQuitDialog) {
+        AlertDialog(
+            onDismissRequest = { showQuitDialog = false },
+            title = { Text("Quit Game?") },
+            text = {
+                Text("Your current puzzle progress will be lost. Do you want to quit?")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showQuitDialog = false
+                        onBackToMenu()
+                    }
+                ) {
+                    Text("Quit")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showQuitDialog = false }) {
+                    Text("Cancel")
+                }
             }
         )
     }

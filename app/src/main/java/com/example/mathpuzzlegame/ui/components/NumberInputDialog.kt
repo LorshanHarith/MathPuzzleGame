@@ -6,11 +6,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 
 @Composable
@@ -29,17 +31,18 @@ fun NumberInputDialog(
         text = {
             TextField(
                 value = input,
-                onValueChange = { changed ->
+                onValueChange = { changed: String ->
                     /*
                      * Only digits are accepted here. This prevents crashes caused by
                      * unexpected input and keeps the puzzle limited to positive integers.
                      * An empty value is allowed so the player can clear and re-enter a cell.
                      */
-                    if (changed.all { it.isDigit() }) {
+                    if (changed.all { character: Char -> character.isDigit() }) {
                         input = changed
                     }
                 },
                 singleLine = true,
+                colors = TextFieldDefaults.colors(cursorColor = Color.Transparent),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
         },

@@ -1,6 +1,5 @@
 package com.example.mathpuzzlegame.data
 
-import com.example.mathpuzzlegame.logic.evaluateEquation
 import kotlin.math.max
 import kotlin.random.Random
 
@@ -32,10 +31,7 @@ object PuzzleFactory {
 
         for (placement in placements) {
             val block = createSolvedBlock(random)
-            val inputCells = when (mode) {
-                GameMode.NORMAL -> chooseNormalBlankCells(block, random)
-                GameMode.ADVANCED -> chooseAdvancedBlankCells(block, random)
-            }
+            val inputCells = chooseBlankCells(block, mode)
 
             for (row in 0 until BLOCK_SIZE) {
                 for (col in 0 until BLOCK_SIZE) {
@@ -111,207 +107,42 @@ object PuzzleFactory {
             .sortedWith(compareBy<GridPosition> { it.row }.thenBy { it.col })
     }
 
-    private fun chooseNormalBlankCells(
+    private fun chooseBlankCells(
         block: SolvedBlock,
-        random: Random
-    ): Set<Pair<Int, Int>> {
-        val blanks = mutableSetOf<Pair<Int, Int>>()
-        val candidateMap = block.numberPositionsByEquation()
-
-        for (candidateList in candidateMap) {
-            blanks += candidateList.random(random)
-        }
-
-        val extraCandidates = block.numberPositions.shuffled(random)
-        val extraBlankCount = random.nextInt(1, 3)
-        for (position in extraCandidates.take(extraBlankCount)) {
-            blanks += position
-        }
-
-        return blanks
-    }
-
-    private fun chooseAdvancedBlankCells(
-        block: SolvedBlock,
-        random: Random
+        mode: GameMode
     ): Set<Pair<Int, Int>> {
         /*
-         * Advanced mode uses a greedy "blank as much as possible while keeping one solution"
-         * strategy for each 5x5 cross block. The block is small, so we can test whether
-         * blanking one more visible number still leaves exactly one valid completion.
-         *
-         * Why this works well for this coursework:
-         * 1. Each block contains only four equations, so generation is quick on a phone.
-         * 2. The vertical equation links the three horizontal equations, which makes the
-         *    block heavily constrained and suitable for greedy blanking.
-         * 3. The result is visibly harder than normal mode because more cells become editable.
-         *
-         * Limitation:
-         * This is a local greedy heuristic rather than a perfect global optimizer. It is a
-         * practical choice because the blocks are independent and the heuristic reliably
-         * produces dense advanced puzzles without harming performance.
+         * We only blank result positions so users always input answers, never the question terms.
+         * This also keeps generation fast and deterministic because no backtracking solver is needed.
          */
-        val visible = block.numberPositions.toMutableSet()
-
-        for (candidate in block.numberPositions.shuffled(random)) {
-            val trialVisible = visible.toMutableSet()
-            trialVisible.remove(candidate)
-
-            if (countSolutions(block, trialVisible, solutionLimit = 2) == 1) {
-                visible.remove(candidate)
-            }
+        return when (mode) {
+            GameMode.NORMAL -> block.answerOnlyBlankPositions
+            GameMode.ADVANCED -> block.answerOnlyBlankPositions
         }
-
-        return block.numberPositions.toSet() - visible
-    }
-
-    private fun countSolutions(
-        block: SolvedBlock,
-        visibleNumbers: Set<Pair<Int, Int>>,
-        solutionLimit: Int
-    ): Int {
-        val fixedNumbers = visibleNumbers.associateWith { position ->
-            block.layout[position.first][position.second].toInt()
-        }
-        val blankNumbers = block.numberPositions.filter { it !in visibleNumbers }
-        var solutions = 0
-
-        fun search(assignments: MutableMap<Pair<Int, Int>, Int>) {
-            if (solutions >= solutionLimit) {
-                return
-            }
-
-            val next = blankNumbers.firstOrNull { it !in assignments } ?: run {
-                if (allEquationsValid(block, fixedNumbers, assignments)) {
-                    solutions++
-                }
-                return
-            }
-
-            val candidates = deriveCandidates(block, next, fixedNumbers, assignments)
-            for (candidate in candidates) {
-                assignments[next] = candidate
-                if (equationsRemainPossible(block, fixedNumbers, assignments)) {
-                    search(assignments)
-                }
-                assignments.remove(next)
-            }
-        }
-
-        search(mutableMapOf())
-        return solutions
-    }
-
-    private fun allEquationsValid(
-        block: SolvedBlock,
-        fixedNumbers: Map<Pair<Int, Int>, Int>,
-        assignments: Map<Pair<Int, Int>, Int>
-    ): Boolean {
-        return block.equations.all { equation ->
-            val asCells = equation.cells.map { position ->
-                val coordinate = position.row to position.col
-                val text = when {
-                    fixedNumbers.containsKey(coordinate) -> fixedNumbers.getValue(coordinate).toString()
-                    assignments.containsKey(coordinate) -> assignments.getValue(coordinate).toString()
-                    else -> block.layout[position.row][position.col]
-                }
-
-                CellData(
-                    row = position.row,
-                    col = position.col,
-                    type = CellType.FIXED,
-                    fixedValue = text
-                )
-            }
-
-            evaluateEquation(Equation(equation.cells), asCells) == EquationState.CORRECT
-        }
-    }
-
-    private fun equationsRemainPossible(
-        block: SolvedBlock,
-        fixedNumbers: Map<Pair<Int, Int>, Int>,
-        assignments: Map<Pair<Int, Int>, Int>
-    ): Boolean {
-        return block.equations.all { equation ->
-            val values = listOf(0, 2, 4).map { index ->
-                val position = equation.cells[index].row to equation.cells[index].col
-                fixedNumbers[position] ?: assignments[position]
-            }
-
-            val operator = block.layout[equation.cells[1].row][equation.cells[1].col]
-            when {
-                values[0] != null && values[1] != null && values[2] != null ->
-                    evaluate(operator, values[0]!!, values[1]!!) == values[2]
-
-                values[0] != null && values[1] != null ->
-                    evaluate(operator, values[0]!!, values[1]!!) != null
-
-                values[0] != null && values[2] != null ->
-                    invertSecond(operator, values[0]!!, values[2]!!) != null
-
-                values[1] != null && values[2] != null ->
-                    invertFirst(operator, values[1]!!, values[2]!!) != null
-
-                else -> true
-            }
-        }
-    }
-
-    private fun deriveCandidates(
-        block: SolvedBlock,
-        target: Pair<Int, Int>,
-        fixedNumbers: Map<Pair<Int, Int>, Int>,
-        assignments: Map<Pair<Int, Int>, Int>
-    ): List<Int> {
-        val relatedEquations = block.equations.filter { equation ->
-            equation.cells.any { it.row == target.first && it.col == target.second }
-        }
-
-        var candidateSet: Set<Int>? = null
-
-        for (equation in relatedEquations) {
-            val aPosition = equation.cells[0].row to equation.cells[0].col
-            val bPosition = equation.cells[2].row to equation.cells[2].col
-            val cPosition = equation.cells[4].row to equation.cells[4].col
-
-            val a = fixedNumbers[aPosition] ?: assignments[aPosition]
-            val b = fixedNumbers[bPosition] ?: assignments[bPosition]
-            val c = fixedNumbers[cPosition] ?: assignments[cPosition]
-            val operator = block.layout[equation.cells[1].row][equation.cells[1].col]
-
-            val localCandidates = when (target) {
-                aPosition -> if (b != null && c != null) listOfNotNull(invertFirst(operator, b, c)) else null
-                bPosition -> if (a != null && c != null) listOfNotNull(invertSecond(operator, a, c)) else null
-                cPosition -> if (a != null && b != null) listOfNotNull(evaluate(operator, a, b)) else null
-                else -> null
-            }
-
-            if (localCandidates != null) {
-                candidateSet = if (candidateSet == null) {
-                    localCandidates.toSet()
-                } else {
-                    candidateSet!!.intersect(localCandidates.toSet())
-                }
-            }
-        }
-
-        return (candidateSet ?: (1..81).toSet())
-            .filter { it > 0 }
-            .sorted()
     }
 
     private fun createSolvedBlock(random: Random): SolvedBlock {
-        val vertical = generateEquationForResult(random)
-        val top = generateEquationWithSecondOperand(random, vertical.firstOperand)
-        val middle = generateEquationWithSecondOperand(random, vertical.secondOperand)
-        val bottom = generateEquationWithSecondOperand(random, vertical.result)
+        /*
+         * Vertical equation is placed on column 4 so intersections are result cells from
+         * horizontal equations. That guarantees editable cells remain answer positions.
+         */
+        val top = generateEquationForResult(random)
+        val middle = generateEquationForResult(random)
+        val verticalResult = top.result + middle.result
+        val bottom = generateEquationForTargetResult(random, verticalResult)
+
+        val vertical = ArithmeticEquation(
+            firstOperand = top.result,
+            operator = "+",
+            secondOperand = middle.result,
+            result = bottom.result
+        )
 
         val layout = listOf(
             listOf(top.firstOperand.toString(), top.operator, top.secondOperand.toString(), "=", top.result.toString()),
-            listOf("#", "#", vertical.operator, "#", "#"),
+            listOf("#", "#", "#", "#", vertical.operator),
             listOf(middle.firstOperand.toString(), middle.operator, middle.secondOperand.toString(), "=", middle.result.toString()),
-            listOf("#", "#", "=", "#", "#"),
+            listOf("#", "#", "#", "#", "="),
             listOf(bottom.firstOperand.toString(), bottom.operator, bottom.secondOperand.toString(), "=", bottom.result.toString())
         )
 
@@ -345,11 +176,11 @@ object PuzzleFactory {
             ),
             Equation(
                 listOf(
-                    GridPosition(0, 2),
-                    GridPosition(1, 2),
-                    GridPosition(2, 2),
-                    GridPosition(3, 2),
-                    GridPosition(4, 2)
+                    GridPosition(0, 4),
+                    GridPosition(1, 4),
+                    GridPosition(2, 4),
+                    GridPosition(3, 4),
+                    GridPosition(4, 4)
                 )
             )
         )
@@ -357,15 +188,9 @@ object PuzzleFactory {
         return SolvedBlock(
             layout = layout,
             equations = equations,
-            numberPositions = listOf(
-                0 to 0,
-                0 to 2,
+            answerOnlyBlankPositions = setOf(
                 0 to 4,
-                2 to 0,
-                2 to 2,
                 2 to 4,
-                4 to 0,
-                4 to 2,
                 4 to 4
             )
         )
@@ -381,7 +206,7 @@ object PuzzleFactory {
 
             1 -> {
                 val b = random.nextInt(2, 15)
-                val result = random.nextInt(1, 15)
+                val result = random.nextInt(2, 15)
                 ArithmeticEquation(result + b, "-", b, result)
             }
 
@@ -399,73 +224,34 @@ object PuzzleFactory {
         }
     }
 
-    private fun generateEquationWithSecondOperand(
+    private fun generateEquationForTargetResult(
         random: Random,
-        secondOperand: Int
+        result: Int
     ): ArithmeticEquation {
         return when (random.nextInt(4)) {
             0 -> {
-                val a = random.nextInt(2, 25)
-                ArithmeticEquation(a, "+", secondOperand, a + secondOperand)
+                val a = random.nextInt(1, result.coerceAtLeast(2))
+                val b = result - a
+                ArithmeticEquation(a, "+", b, result)
             }
 
             1 -> {
-                val result = random.nextInt(1, 25)
-                ArithmeticEquation(result + secondOperand, "-", secondOperand, result)
+                val b = random.nextInt(1, 12)
+                ArithmeticEquation(result + b, "-", b, result)
             }
 
             2 -> {
-                val a = random.nextInt(2, 12)
-                ArithmeticEquation(a, "x", secondOperand, a * secondOperand)
+                val divisors = (1..result).filter { divisor -> result % divisor == 0 }
+                val a = divisors.random(random)
+                val b = result / a
+                ArithmeticEquation(a, "x", b, result)
             }
 
             else -> {
-                val result = random.nextInt(2, 12)
-                ArithmeticEquation(secondOperand * result, "/", secondOperand, result)
+                val b = random.nextInt(1, 12)
+                ArithmeticEquation(result * b, "/", b, result)
             }
         }
-    }
-
-    private fun evaluate(
-        operator: String,
-        first: Int,
-        second: Int
-    ): Int? {
-        return when (operator) {
-            "+" -> first + second
-            "-" -> first - second
-            "x" -> first * second
-            "/" -> if (second != 0 && first % second == 0) first / second else null
-            else -> null
-        }
-    }
-
-    private fun invertFirst(
-        operator: String,
-        second: Int,
-        result: Int
-    ): Int? {
-        return when (operator) {
-            "+" -> result - second
-            "-" -> result + second
-            "x" -> if (second != 0 && result % second == 0) result / second else null
-            "/" -> result * second
-            else -> null
-        }?.takeIf { it > 0 }
-    }
-
-    private fun invertSecond(
-        operator: String,
-        first: Int,
-        result: Int
-    ): Int? {
-        return when (operator) {
-            "+" -> result - first
-            "-" -> first - result
-            "x" -> if (first != 0 && result % first == 0) result / first else null
-            "/" -> if (result != 0 && first % result == 0) first / result else null
-            else -> null
-        }?.takeIf { it > 0 }
     }
 }
 
@@ -479,15 +265,5 @@ private data class ArithmeticEquation(
 private data class SolvedBlock(
     val layout: List<List<String>>,
     val equations: List<Equation>,
-    val numberPositions: List<Pair<Int, Int>>
-) {
-    fun numberPositionsByEquation(): List<List<Pair<Int, Int>>> {
-        return equations.map { equation ->
-            listOf(
-                equation.cells[0].row to equation.cells[0].col,
-                equation.cells[2].row to equation.cells[2].col,
-                equation.cells[4].row to equation.cells[4].col
-            )
-        }
-    }
-}
+    val answerOnlyBlankPositions: Set<Pair<Int, Int>>
+)

@@ -9,9 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -25,8 +23,6 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun MainMenuScreen(
-    selectedEquationCount: Int,
-    onEquationCountChanged: (Int) -> Unit,
     onNewGame: () -> Unit,
     onAdvanced: () -> Unit
 ) {
@@ -44,35 +40,6 @@ fun MainMenuScreen(
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold
         )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Card(
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "Number of equations: $selectedEquationCount",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "The generator uses groups of 4 linked equations so every puzzle stays valid.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Slider(
-                    value = selectedEquationCount.toFloat(),
-                    onValueChange = { value ->
-                        val rounded = value.toInt().coerceIn(4, 16)
-                        val snapped = ((rounded + 1) / 4) * 4
-                        onEquationCountChanged(snapped.coerceIn(4, 16))
-                    },
-                    valueRange = 4f..16f,
-                    steps = 2
-                )
-            }
-        }
 
         Spacer(modifier = Modifier.height(24.dp))
 
